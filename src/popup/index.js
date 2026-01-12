@@ -1,6 +1,51 @@
 import './index.css'
 import { analyzeComplexity } from '../utils/complexityAnalyzer'
 import { analyzePythonComplexity } from '../utils/pythonComplexityAnalyzer'
+import { analyzeJavaComplexity } from '../utils/javaComplexityAnalyzer'
+
+// Simple heuristic-based language detection
+function detectLanguage(code) {
+  if (!code || !code.trim()) {
+    return 'javascript'
+  }
+
+  const lines = code.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0)
+  
+  let javaScore = 0
+  let pythonScore = 0
+  let jsScore = 0
+
+  for (const line of lines) {
+    if (line.startsWith('//') || line.startsWith('#') || line.startsWith('/*') || line.startsWith('*')) {
+      continue
+    }
+
+    // Java patterns
+    if (/\b(public|private|protected)\s+(static\s+)?(void|int|boolean|String|double|float|long)\s+\w+\s*\(/.test(line)) javaScore += 3
+    if (/\bnew\s+(HashMap|HashSet|ArrayList|LinkedList)\s*[<(]/.test(line)) javaScore += 2
+    if (/\b(class|interface|extends|implements)\s+\w+/.test(line)) javaScore += 2
+    if (line.endsWith(';') && !line.includes('for') && !line.includes('while')) javaScore += 0.5
+    if (/\bint\[\]|\bString\[\]/.test(line)) javaScore += 1
+
+    // Python patterns
+    if (/^def\s+\w+\s*\(/.test(line)) pythonScore += 3
+    if (/\b(self|True|False|None|elif|pass)\b/.test(line)) pythonScore += 2
+    if (/:.*$/.test(line) && /\b(if|for|while|def|class)\b/.test(line)) pythonScore += 1
+    if (/\brange\s*\(|\benumerate\s*\(|\blen\s*\(/.test(line)) pythonScore += 1
+
+    // JavaScript patterns
+    if (/\b(function|const|let|var)\s+\w+/.test(line)) jsScore += 2
+    if (/=>\s*{|=>\s*\w/.test(line)) jsScore += 2
+    if (/\bnew\s+(Map|Set|Array)\s*[(<]/.test(line)) jsScore += 2
+    if (/===|!==/.test(line)) jsScore += 1
+  }
+
+  const maxScore = Math.max(javaScore, pythonScore, jsScore)
+  if (maxScore === 0) return 'javascript'
+  if (javaScore === maxScore) return 'java'
+  if (pythonScore === maxScore) return 'python'
+  return 'javascript'
+}
 
 const samples = {
   javascript: `function twoSum(nums, target) {
@@ -20,6 +65,17 @@ const samples = {
             return [seen[complement], i]
         seen[num] = i
     return []`,
+  java: `public int[] twoSum(int[] nums, int target) {
+    HashMap<Integer, Integer> seen = new HashMap<>();
+    for (int i = 0; i < nums.length; i++) {
+        int complement = target - nums[i];
+        if (seen.containsKey(complement)) {
+            return new int[] { seen.get(complement), i };
+        }
+        seen.put(nums[i], i);
+    }
+    return new int[] {};
+}`,
 }
 
 const LIMITS = {
@@ -43,13 +99,16 @@ document.addEventListener('DOMContentLoaded', () => {
             <label class="field">
               <span class="field-label">Language</span>
               <select id="language" name="language" class="select-input">
-                <option value="javascript">🟨 JavaScript</option>
-                <option value="python">🐍 Python</option>
+                <option value="auto">Auto-detect</option>
+                <option value="javascript">JavaScript</option>
+                <option value="python">Python</option>
+                <option value="java">Java</option>
               </select>
             </label>
             <label class="field field-optional">
               <span class="field-label">Function name <span class="optional-text">(optional)</span></span>
-              <input id="fn-name" name="fn-name" class="text-input" placeholder="e.g., twoSum" />
+              <input id="fn-name" name="fn-name" class="text-input" placeholder="e.g., twoSum" title="Used to detect recursive calls within the specified function" />
+              <span class="field-hint">Helps detect recursion in the specified function</span>
             </label>
           </div>
           
@@ -98,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
       throw new Error('Add code to analyze.')
     }
 
-    if (!['python', 'javascript'].includes(language)) {
+    if (!['auto', 'python', 'javascript', 'java'].includes(language)) {
       throw new Error('Unsupported language selection.')
     }
 
@@ -184,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return "moderate"
   }
 
-  const renderResult = (analysis) => {
+  const renderResult = (analysis, detectedLanguage = null) => {
     const { inferredTimeComplexity, signals } = analysis
     const explanation = generateExplanation(inferredTimeComplexity, signals)
     const observations = generateObservations(signals)
@@ -193,7 +252,14 @@ document.addEventListener('DOMContentLoaded', () => {
     resultsEl.classList.remove('empty-state-active')
     resultsEl.classList.add('has-results')
     
+    const languageDisplay = detectedLanguage ? `
+      <div class="detected-language">
+        <span class="language-badge">Detected: ${detectedLanguage.charAt(0).toUpperCase() + detectedLanguage.slice(1)}</span>
+      </div>
+    ` : ''
+    
     resultsEl.innerHTML = `
+      ${languageDisplay}
       <div class="summary-section">
         <div class="summary-card complexity-${complexityColor}">
           <div class="card-label">TIME COMPLEXITY</div>
@@ -292,9 +358,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const loadDraft = () => {
     chrome.storage.local.get(['tcDraft', 'tcFunctionName', 'tcLanguage', 'tcLastResult'], (data) => {
-      const lang = data.tcLanguage || 'python'
+      const lang = data.tcLanguage || 'auto'
       langSelect.value = lang
-      codeInput.value = data.tcDraft || samples[lang]
+      codeInput.value = data.tcDraft || samples.javascript
       fnInput.value = data.tcFunctionName || 'twoSum'
       if (data.tcLastResult) renderResult(data.tcLastResult)
     })
@@ -303,19 +369,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const analyze = () => {
     const code = codeInput.value.trim()
     const fnName = fnInput.value.trim()
-    const language = langSelect.value
+    let language = langSelect.value
+    const wasAutoDetected = language === 'auto'
 
     try {
+      // Auto-detect language if "auto" is selected
+      if (language === 'auto') {
+        language = detectLanguage(code)
+      }
+      
       validateSnippet(code, language)
       
       showLoading()
       
       // Simulate processing time for better UX
       setTimeout(() => {
-        const analysis = language === 'python'
-          ? analyzePythonComplexity(code, fnName)
-          : analyzeComplexity(code, fnName)
-        renderResult(analysis)
+        let analysis
+        if (language === 'python') {
+          analysis = analyzePythonComplexity(code, fnName)
+        } else if (language === 'java') {
+          analysis = analyzeJavaComplexity(code, fnName)
+        } else {
+          analysis = analyzeComplexity(code, fnName)
+        }
+        renderResult(analysis, wasAutoDetected ? language : null)
         persistDraft(analysis)
       }, 600)
     } catch (err) {

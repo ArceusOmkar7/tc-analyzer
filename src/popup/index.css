@@ -134,6 +134,14 @@ body {
   font-size: 12px;
 }
 
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .select-input,
 .text-input {
   width: 100%;
@@ -316,6 +324,23 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ========== Detected Language Badge ========== */
+.detected-language {
+  margin-bottom: 16px;
+  padding: 8px 0;
+}
+
+.language-badge {
+  display: inline-block;
+  padding: 6px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 /* ========== Summary Cards ========== */
